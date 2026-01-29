@@ -1,46 +1,58 @@
 module.exports = {
     name: "Hidetag",
-    // Command alias sesuai request
-    command: ["h", "ht", "hidetag"],
-    // Opsi ini wajib true agar hanya Owner/Bot yang bisa akses (Sesuai logic di index.js Anda)
-    owner: true, 
-    execute: async (sock, m, { args }) => {
+    command: ["h", "ht", "hidetag"], // Command yang bisa dipakai
+    execute: async (sock, m, { args, isOwner }) => {
         const jid = m.key.remoteJid
-
-        // 1. Cek apakah pesan dikirim di dalam grup
+        
+        // 1. Cek apakah ini Grup
         if (!jid.endsWith("@g.us")) {
-            return sock.sendMessage(jid, { text: "❌ Fitur ini hanya bisa digunakan di dalam grup!" }, { quoted: m })
+            return sock.sendMessage(jid, { text: "❌ Fitur ini hanya untuk grup!" }, { quoted: m })
         }
 
         try {
-            // 2. Ambil metadata grup untuk mendapatkan list member
+            // Ambil data metadata grup untuk dapetin list member
             const groupMetadata = await sock.groupMetadata(jid)
             const participants = groupMetadata.participants
-            
-            // 3. Buat array semua ID member untuk di-tag
-            const mentions = participants.map(p => p.id)
+            const mentions = participants.map(p => p.id) // Ambil semua ID member
 
-            // 4. Tentukan isi pesan
-            // Logic: Ambil teks setelah command. Jika kosong, cek apakah ada reply pesan. Jika tidak ada, pakai default.
-            let text = args.join(" ")
-            
-            // Cek properti quoted jika ada (untuk menghandle reply text)
-            // Note: m.quoted biasanya ditambahkan oleh library helper, jika murni baileys raw mungkin perlu parsing manual.
-            // Di sini kita asumsikan teks biasa.
-            
-            if (!text) {
-                text = "Klean kntol" // Default text jika kosong
+            // 2. Cek apakah Pengirim adalah Admin
+            const sender = m.key.participant || m.key.remoteJid
+            const participant = participants.find(p => p.id === sender)
+            const isAdmin = participant?.admin === 'admin' || participant?.admin === 'superadmin'
+
+            // Logic: Jika bukan Admin DAN bukan Owner, tolak.
+            if (!isAdmin && !isOwner) {
+                return sock.sendMessage(jid, { text: "❌ Lu siapa? Fitur ini khusus Admin!" }, { quoted: m })
             }
 
-            // 5. Kirim pesan dengan mentions (Hidetag)
+            // 3. Siapkan Pesan
+            let text = args.join(" ")
+            let quoted = m.quoted ? m.quoted : m
+            
+            // Cek apakah user mereply pesan orang lain (Untuk mengambil konteks reply)
+            // Di Baileys Raw, struktur quoted ada di m.message.extendedTextMessage.contextInfo
+            const isQuotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage
+
+            if (isQuotedMsg) {
+                // Jika user mereply pesan: Kita ambil tipe pesannya dan copy
+                // Karena forwarding raw baileys agak ribet, opsi teraman adalah Hidetag Text biasa
+                // Tapi kita kasih opsi Text Default jika user cuma ketik .h tanpa teks
+                if (!text) text = "Attention All Members!"
+            } else {
+                // Jika tidak mereply, dan tidak ada teks, kasih default
+                if (!text) text = "Attention All Members!"
+            }
+
+            // 4. Kirim Hidetag
+            // Kita kirim pesan teks biasa tapi menyisipkan 'mentions' ke semua orang
             await sock.sendMessage(jid, {
                 text: text,
                 mentions: mentions
             })
 
         } catch (e) {
-            console.error(e)
-            await sock.sendMessage(jid, { text: "❌ Gagal mengambil data grup." }, { quoted: m })
+            console.error("Hidetag Error:", e)
+            await sock.sendMessage(jid, { text: "❌ Gagal memuat data grup." }, { quoted: m })
         }
     }
 }
