@@ -1,0 +1,23 @@
+{
+  "name": "ubot-wa-baileys",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot Base: TikTok DL, Auto Like, Sticker Maker",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "latest",
+    "axios": "^1.6.7",
+    "pino": "^8.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
