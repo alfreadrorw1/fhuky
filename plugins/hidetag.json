@@ -1,34 +1,46 @@
 module.exports = {
     name: "Hidetag",
+    // Command alias sesuai request
     command: ["h", "ht", "hidetag"],
-    owner: true,
+    // Opsi ini wajib true agar hanya Owner/Bot yang bisa akses (Sesuai logic di index.js Anda)
+    owner: true, 
     execute: async (sock, m, { args }) => {
-        const jid = m.key.remoteJid;
+        const jid = m.key.remoteJid
 
-        // Cek apakah di dalam grup
+        // 1. Cek apakah pesan dikirim di dalam grup
         if (!jid.endsWith("@g.us")) {
-            return sock.sendMessage(jid, { text: "❌ Hanya untuk grup!" }, { quoted: m });
+            return sock.sendMessage(jid, { text: "❌ Fitur ini hanya bisa digunakan di dalam grup!" }, { quoted: m })
         }
 
         try {
-            // Ambil data member grup
-            const groupMetadata = await sock.groupMetadata(jid);
-            const participants = groupMetadata.participants;
-            const mentions = participants.map(p => p.id);
+            // 2. Ambil metadata grup untuk mendapatkan list member
+            const groupMetadata = await sock.groupMetadata(jid)
+            const participants = groupMetadata.participants
+            
+            // 3. Buat array semua ID member untuk di-tag
+            const mentions = participants.map(p => p.id)
 
-            // Ambil teks dari argumen, kalau kosong pakai pesan default
-            let text = args.join(" ");
-            if (!text) text = "Tag All Members!";
+            // 4. Tentukan isi pesan
+            // Logic: Ambil teks setelah command. Jika kosong, cek apakah ada reply pesan. Jika tidak ada, pakai default.
+            let text = args.join(" ")
+            
+            // Cek properti quoted jika ada (untuk menghandle reply text)
+            // Note: m.quoted biasanya ditambahkan oleh library helper, jika murni baileys raw mungkin perlu parsing manual.
+            // Di sini kita asumsikan teks biasa.
+            
+            if (!text) {
+                text = "Klean kntol" // Default text jika kosong
+            }
 
-            // Kirim pesan dengan mention tersembunyi (hidetag)
+            // 5. Kirim pesan dengan mentions (Hidetag)
             await sock.sendMessage(jid, {
                 text: text,
                 mentions: mentions
-            }, { quoted: m });
+            })
 
         } catch (e) {
-            console.error("Hidetag Error:", e);
-            await sock.sendMessage(jid, { text: "❌ Gagal mengambil data grup." }, { quoted: m });
+            console.error(e)
+            await sock.sendMessage(jid, { text: "❌ Gagal mengambil data grup." }, { quoted: m })
         }
     }
 }
