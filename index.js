@@ -1,262 +1,93 @@
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore,
-    jidDecode,
-    proto
-} = require("@whiskeysockets/baileys")
+/*
+⚠️ PERINGATAN:
+Script ini **TIDAK BOLEH DIPERJUALBELIKAN** dalam bentuk apa pun!
 
-const pino = require("pino")
-const { Boom } = require("@hapi/boom")
-const readline = require("readline")
-const fs = require("fs")
-const path = require("path")
+╔══════════════════════════════════════════════╗
+║                🛠️ INFORMASI SCRIPT           ║
+╠══════════════════════════════════════════════╣
+║ 📦 Version   : 5.1.0
+║ 👨‍💻 Developer  : Azhari Creative              ║
+║ 🌐 Website    : https://autoresbot.com       ║
+║ 💻 GitHub  : github.com/autoresbot/resbot-md ║
+╚══════════════════════════════════════════════╝
 
-// KONFIGURASI PATH
-const configPath = path.join(__dirname, "config.json")
-const prefixPath = path.join(__dirname, "data", "prefix.json")
-const sessionDir = "session"
+📌 Script ini Open Source dan gratis.
+*/
+// ─── Import modul internal via path relatif ───────────
+import "./lib/version.js";
+import { checkAndInstallModules, clearDirectory } from "./lib/utils.js";
 
-// CEK FOLDER DATA
-if (!fs.existsSync(path.join(__dirname, "data"))) {
-    fs.mkdirSync(path.join(__dirname, "data"), { recursive: true })
-}
+console.log(`[✔] Start App ...`);
 
-// FUNGSI INPUT CONSOLE
-const question = (text) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    return new Promise(resolve => rl.question(text, ans => {
-        rl.close()
-        resolve(ans)
-    }))
-}
+// ─── Cek versi Node ───────────────────────────────
+const [major] = process.versions.node.split(".").map(Number);
 
-// GLOBAL PLUGINS STORE
-const plugins = new Map()
+if (major < 20 || major >= 21) {
+  console.error(`❌ Script ini hanya kompatibel dengan Node.js versi 20.x`);
+  console.error(
+    `ℹ️ Jika kamu menjalankan script ini melalui panel, buka menu *Startup*, lalu ubah *Docker Image* ke versi Node.js 20`
+  );
 
-// FUNGSI LOAD PLUGINS
-function loadPlugins(dir = path.join(__dirname, "plugins")) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  // Tunggu 1 menit lalu exit
+  setTimeout(() => process.exit(1), 60_000);
+} else {
+  process.env.TZ = "Asia/Jakarta"; // Timezone utama
+
+  const config = (await import("./config.js")).default;
+
+  const BOT_NUMBER = config.phone_number_bot || "";
+
+  // ─── Fungsi report crash ─────────────────────────
+  async function reportCrash(status) {
+    // Laporan crash bisa diaktifkan nanti
+    // const axios = (await import('axios')).default;
+    // const reportUrl = `https://example.com/api/${BOT_NUMBER}/status?status=${encodeURIComponent(status)}`;
+    // try {
+    //   await axios.get(reportUrl);
+    //   console.log('✅ Laporan crash berhasil dikirim.');
+    // } catch (err) {
+    //   console.error('❌ Gagal kirim laporan crash:', err.message);
+    // }
+  }
+
+  // ─── Start App ───────────────────────────────────
+  try {
+    clearDirectory("./tmp");
+
+      // Jalankan setiap 3 jam (3 jam = 10800000 ms)
+    setInterval(() => {
+      console.log("[SCHEDULE] Membersihkan folder tmp...");
+      clearDirectory("./tmp");
+    }, 3 * 60 * 60 * 1000);
+
+    console.log('[✔] Cache cleaned successfully.');
     
-    // Reset plugins map saat reload
-    if (dir === path.join(__dirname, "plugins")) plugins.clear()
+    await checkAndInstallModules([
+      "follow-redirects",
+      "jimp@1.6.0",
+      "qrcode-reader",
+      "wa-sticker-formatter",
+      "api-autoresbot@1.0.6",
+    ]);
 
-    const files = fs.readdirSync(dir)
-    for (const file of files) {
-        const fullPath = path.join(dir, file)
-        const stat = fs.statSync(fullPath)
+    const { start_app } = await import("./lib/startup.js");
+    await start_app();
+  } catch (err) {
+    console.error("Error dalam proses start_app:", err.message);
+    await reportCrash("inactive");
+    process.exit(1);
+  }
 
-        if (stat.isDirectory()) {
-            loadPlugins(fullPath)
-        } else if (file.endsWith(".js")) {
-            try {
-                delete require.cache[require.resolve(fullPath)]
-                const plugin = require(fullPath)
-                if ((plugin.command || plugin.noPrefix) && typeof plugin.execute === "function") {
-                    const pluginName = plugin.name || file.replace(".js", "")
-                    plugins.set(pluginName, plugin)
-                }
-            } catch (e) {
-                console.error(`❌ [PLUGIN ERROR] ${file}:`, e.message)
-            }
-        }
-    }
+  // ─── Error Handler ───────────────────────────────
+  process.on("uncaughtException", async (err) => {
+    console.error("❌ Uncaught Exception:", err);
+    await reportCrash("inactive");
+    process.exit(1);
+  });
+
+  process.on("unhandledRejection", async (reason, promise) => {
+    console.error("❌ Unhandled Rejection:", reason);
+    await reportCrash("inactive");
+    process.exit(1);
+  });
 }
-
-// DECODE JID
-const decodeJid = (jid) => {
-    if (!jid) return jid
-    if (/:\d+@/gi.test(jid)) {
-        let decode = jidDecode(jid) || {}
-        return decode.user && decode.server && decode.user + "@" + decode.server || jid
-    }
-    return jid
-}
-
-// --- ANTI CRASH SYSTEM ---
-// Menangkap error fatal agar bot tidak mati total
-process.on('uncaughtException', console.error)
-process.on('unhandledRejection', console.error)
-
-// --- MAIN FUNCTION ---
-async function startBot() {
-    console.clear()
-    console.log("🤖 UBOT WA STARTING...")
-
-    // Load Session
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir)
-    const { version } = await fetchLatestBaileysVersion()
-
-    const sock = makeWASocket({
-        version,
-        auth: {
-            creds: state.creds,
-            // Menggunakan Silent Logger agar terminal bersih
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
-        },
-        logger: pino({ level: "silent" }), 
-        printQRInTerminal: false, // Kita pakai Pairing Code
-        browser: ["Ubuntu", "Chrome", "20.0.04"],
-        generateHighQualityLinkPreview: true,
-        getMessage: async (key) => {
-            return { conversation: 'hello' }
-        }
-    })
-
-    // PAIRING CODE LOGIC
-    if (!sock.authState.creds.registered) {
-        let currentConfig = {}
-        try {
-            currentConfig = JSON.parse(fs.readFileSync(configPath))
-        } catch {
-            currentConfig = { pairingText: "UBOT" }
-        }
-
-        const phone = await question("📱 Masukkan Nomor WA (628xxx): ")
-        
-        setTimeout(async () => {
-            const cleanPhone = phone.trim().replace(/[^0-9]/g, "")
-            try {
-                const code = await sock.requestPairingCode(cleanPhone)
-                const formattedCode = code?.match(/.{1,4}/g)?.join("-") || code
-                console.log(`\n🔡 KODE PAIRING [${currentConfig.pairingText || "UBOT"}]: ${formattedCode}\n`)
-            } catch (err) {
-                console.error("❌ Gagal request pairing code:", err.message)
-            }
-        }, 3000)
-    }
-
-    // UPDATE CREDENTIALS
-    sock.ev.on("creds.update", saveCreds)
-
-    // CONNECTION UPDATE
-    sock.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect } = update
-        
-        if (connection === "open") {
-            console.log("✅ Status: Connected!")
-            
-            loadPlugins()
-            let userCount = 0
-            try {
-                const config = JSON.parse(fs.readFileSync(configPath))
-                userCount = Array.isArray(config.user) ? config.user.length : 0
-            } catch {}
-
-            console.log(`———————————————`)
-            console.log(`👥 User Connect: ${userCount}`)
-            console.log(`🔄 Load Plugins: ${plugins.size}`)
-            console.log(`———————————————`)
-            console.log("🤖 UBot Running...")
-        }
-        
-        if (connection === "close") {
-            let reason = new Boom(lastDisconnect?.error)?.output.statusCode
-            
-            if (reason === DisconnectReason.badSession) {
-                console.log(`❌ Bad Session File, Hapus folder ${sessionDir} dan scan ulang.`)
-                sock.logout()
-            } else if (reason === DisconnectReason.connectionClosed) {
-                console.log("⚠️ Connection closed, reconnecting....")
-                startBot()
-            } else if (reason === DisconnectReason.connectionLost) {
-                console.log("⚠️ Connection Lost from Server, reconnecting...")
-                startBot()
-            } else if (reason === DisconnectReason.connectionReplaced) {
-                console.log("⚠️ Connection Replaced, Another New Session Opened, Please Close Current Session First")
-                sock.logout()
-            } else if (reason === DisconnectReason.loggedOut) {
-                console.log(`❌ Device Logged Out, Hapus folder ${sessionDir} dan scan ulang.`)
-                fs.rmSync(sessionDir, { recursive: true, force: true })
-                process.exit() // Keluar agar user bisa start ulang manual
-            } else if (reason === DisconnectReason.restartRequired) {
-                console.log("⚠️ Restart Required, Restarting...")
-                startBot()
-            } else if (reason === DisconnectReason.timedOut) {
-                console.log("⚠️ Connection TimedOut, Reconnecting...")
-                startBot()
-            } else {
-                console.log(`⚠️ Unknown DisconnectReason: ${reason}|${connection}`)
-                startBot()
-            }
-        }
-    })
-
-    // MESSAGE HANDLER
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
-        if (type !== "notify") return
-        const m = messages[0]
-        if (!m.message) return
-        if (m.key.remoteJid === "status@broadcast") {
-            // Auto Like Status logic (Jika ada pluginnya)
-            // Bisa ditambahkan di sini atau di plugin terpisah
-            return 
-        }
-
-        try {
-            // CONFIG LOADER (Selalu fresh update)
-            let latestConfig = {}
-            try { latestConfig = JSON.parse(fs.readFileSync(configPath)) } catch { return }
-
-            const mainOwner = latestConfig.owner ? latestConfig.owner.replace(/[^0-9]/g, '') : ""
-            const allowedUsers = Array.isArray(latestConfig.user) ? latestConfig.user.map(num => num.replace(/[^0-9]/g, '')) : []
-
-            let dynamicPrefix = "."
-            try {
-                if (fs.existsSync(prefixPath)) {
-                    const pData = JSON.parse(fs.readFileSync(prefixPath))
-                    dynamicPrefix = pData.prefix
-                }
-            } catch { dynamicPrefix = "." }
-
-            const isMe = m.key.fromMe
-            const rawSender = isMe ? sock.user.id : (m.key.participant || m.key.remoteJid)
-            const senderJid = decodeJid(rawSender)
-            const senderNumber = senderJid.split('@')[0].split(':')[0]
-            
-            const body = (m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || m.message?.videoMessage?.caption || "")
-            
-            const prefix = dynamicPrefix
-            const isCmd = prefix === "" 
-                ? Array.from(plugins.values()).some(p => Array.isArray(p.command) ? p.command.includes(body.trim().split(/ +/)[0].toLowerCase()) : p.command === body.trim().split(/ +/)[0].toLowerCase()) 
-                : body.startsWith(prefix)
-                
-            const command = isCmd 
-                ? (prefix === "" ? body.trim().split(/ +/).shift().toLowerCase() : body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase()) 
-                : ""
-            const args = body.trim().split(/ +/).slice(1)
-
-            const isOwner = isMe || senderNumber === mainOwner || allowedUsers.includes(senderNumber)
-
-            // 1. JALANKAN PLUGIN TANPA PREFIX
-            for (const plugin of plugins.values()) {
-                if (plugin.noPrefix && !isCmd) {
-                    try {
-                        await plugin.execute(sock, m, { args, body, isOwner, prefix, command: "", sender: senderJid })
-                    } catch (err) { console.error(`[Plugin Error - NoPrefix] ${plugin.name}:`, err) }
-                }
-            }
-
-            // 2. JALANKAN PLUGIN DENGAN COMMAND
-            if (isCmd) {
-                const plugin = Array.from(plugins.values()).find(p => Array.isArray(p.command) ? p.command.includes(command) : p.command === command)
-                if (plugin) {
-                    if (plugin.owner && !isOwner) return // Proteksi owner only
-                    try {
-                        await plugin.execute(sock, m, { args, body, isOwner, prefix, command, sender: senderJid })
-                    } catch (err) { 
-                        console.error(`[Plugin Error] ${plugin.name}:`, err)
-                        await sock.sendMessage(m.key.remoteJid, { text: "❌ Terjadi kesalahan pada fitur ini." }, { quoted: m })
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Message Upsert Error:", e)
-        }
-    })
-}
-
-// JALANKAN BOT
-startBot()
