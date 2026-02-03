@@ -16,18 +16,23 @@ function getMediaContent(media) {
 async function handle(sock, messageInfo) {
   const { remoteJid, isGroup, message, sender, content, isQuoted, type } =
     messageInfo;
-  if (!isGroup) return; // Only Grub
+  if (!isGroup) return; // Only Group
 
   try {
     // Mendapatkan metadata grup
     const groupMetadata = await getGroupMetadata(sock, remoteJid);
     const participants = groupMetadata.participants;
+    
+    // Cek apakah pengirim adalah admin
     const isAdmin = participants.some(
       (p) => (p.phoneNumber === sender || p.id === sender) && p.admin
     );
 
+    // Cek apakah pengirim adalah owner
     const isOwnerUsers = isOwner(sender);
 
+    // Hanya admin atau owner yang bisa menggunakan perintah
+    // Owner bisa meskipun bukan admin
     if (!isAdmin && !isOwnerUsers) {
       await sock.sendMessage(
         remoteJid,
